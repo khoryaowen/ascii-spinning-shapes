@@ -5,12 +5,11 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#define WIDTH  80
-#define HEIGHT 40
-
+#define WIDTH  100
+#define HEIGHT 50
 #define CAMERA_DIST 5.0
-#define K           30.0
-#define ASPECT      2.0
+#define K 40.0
+#define ASPECT 2.0
 
 typedef struct { double x, y, z; } Vec3;
 
@@ -73,9 +72,21 @@ static int project(Vec3 p, int *sx, int *sy) {
     return 1;
 }
 
-/* ---- line drawing (Bresenham) ---- */
 
-static void draw_line(int x0, int y0, int x1, int y1, char c) {
+/* ---- line drawing (Bresenham) ---- */
+static char line_char(int x0, int y0, int x1, int y1) {
+    double dx = fabs((double)(x1 - x0));
+    double dy = fabs((double)(y1 - y0)) * ASPECT;   /* visual height */
+
+    if (dx == 0 && dy == 0) return '+';
+    if (dy < dx * 0.4)      return '-';
+    if (dy > dx * 2.4)      return '|';
+    return ((x1 - x0) * (y1 - y0) > 0) ? '\\' : '/';
+}
+
+static void draw_line(int x0, int y0, int x1, int y1) {
+    char c = line_char(x0, y0, x1, y1);
+
     int dx =  abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
     int err = dx + dy;
@@ -125,8 +136,12 @@ int main(void) {
             int a = cube_edges[e][0];
             int b = cube_edges[e][1];
             if (visible[a] && visible[b])
-                draw_line(px[a], py[a], px[b], py[b], '#');
+                draw_line(px[a], py[a], px[b], py[b]);
         }
+
+        for (int i = 0; i < 8; i++)
+            if (visible[i])
+                put_char(px[i], py[i], '@');
 
         present();
         ax += 0.04;
