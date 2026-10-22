@@ -13,7 +13,7 @@
 
 typedef struct { double x, y, z; } Vec3;
 typedef struct { double x, y, inv_z; int visible; } ScreenPt;
-typedef struct { int v[3]; char ch; } Tri;
+typedef struct { int v[3]; } Tri;
 
 static char   screen[HEIGHT][WIDTH];
 static double zbuf[HEIGHT][WIDTH];
@@ -61,6 +61,29 @@ static Vec3 rotate_z(Vec3 p, double a) {
     return r;
 }
 
+static Vec3 vsub(Vec3 a, Vec3 b) {
+    Vec3 r = { a.x - b.x, a.y - b.y, a.z - b.z };
+    return r;
+}
+
+static Vec3 cross(Vec3 a, Vec3 b) {
+    Vec3 r = { a.y * b.z - a.z * b.y,
+               a.z * b.x - a.x * b.z,
+               a.x * b.y - a.y * b.x };
+    return r;
+}
+
+static double dot(Vec3 a, Vec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static Vec3 normalize(Vec3 v) {
+    double len = sqrt(dot(v, v));
+    if (len < 1e-12) return v;
+    Vec3 r = { v.x / len, v.y / len, v.z / len };
+    return r;
+}
+
 static void project(Vec3 p, ScreenPt *out) {
     double depth = p.z + CAMERA_DIST;
     out->visible = depth > 0.1;
@@ -69,6 +92,21 @@ static void project(Vec3 p, ScreenPt *out) {
     out->x     = WIDTH  / 2.0 + ASPECT * p.x * scale;
     out->y     = HEIGHT / 2.0 - p.y * scale;
     out->inv_z = 1.0 / depth;
+}
+
+/* ---- shading ---- */
+
+static const char RAMP[] = ".,-~:;=!*#$@";
+#define RAMP_LEN ((int)sizeof(RAMP) - 1)
+#define AMBIENT  0.1
+
+static const Vec3 LIGHT_RAW = { -0.4, 0.7, -0.6 };
+
+static char shade_char(double brightness) {
+    if (brightness < 0) brightness = 0;
+    if (brightness > 1) brightness = 1;
+    int idx = (int)(brightness * (RAMP_LEN - 1) + 0.5);
+    return RAMP[idx];
 }
 
 /* ---- triangle rasterizer ---- */
@@ -118,38 +156,59 @@ static const Vec3 cube_vertices[8] = {
 };
 
 static const Tri cube_tris[12] = {
-    {{0, 1, 2}, '.'}, {{0, 2, 3}, '.'},     /* back   (z = -1) */
-    {{4, 5, 6}, '#'}, {{4, 6, 7}, '#'},     /* front  (z = +1) */
-    {{0, 3, 7}, '+'}, {{0, 7, 4}, '+'},     /* left   (x = -1) */
-    {{1, 2, 6}, '='}, {{1, 6, 5}, '='},     /* right  (x = +1) */
-    {{0, 1, 5}, '%'}, {{0, 5, 4}, '%'},     /* bottom (y = -1) */
-    {{3, 2, 6}, '@'}, {{3, 6, 7}, '@'},     /* top    (y = +1) */
+    {{0, 1, 2}}, {{0, 2, 3}},     /* back   (z = -1) */
+    {{4, 5, 6}}, {{4, 6, 7}},     /* front  (z = +1) */
+    {{0, 3, 7}}, {{0, 7, 4}},     /* left   (x = -1) */
+    {{1, 2, 6}}, {{1, 6, 5}},     /* right  (x = +1) */
+    {{0, 1, 5}}, {{0, 5, 4}},     /* bottom (y = -1) */
+    {{3, 2, 6}}, {{3, 6, 7}},     /* top    (y = +1) */
 };
 
 int main(void) {
     signal(SIGINT, handle_sigint);
     printf("\x1b[2J\x1b[?25l");
 
+    Vec3 light = normalize(LIGHT_RAW);
     double ax = 0, ay = 0, az = 0;
 
     while (running) {
         clear_buffers();
 
+        Vec3 rot[8];
         ScreenPt pts[8];
         for (int i = 0; i < 8; i++) {
             Vec3 p = cube_vertices[i];
             p = rotate_x(p, ax);
             p = rotate_y(p, ay);
             p = rotate_z(p, az);
+            rot[i] = p;
             project(p, &pts[i]);
         }
 
         for (int t = 0; t < 12; t++) {
-            const ScreenPt *a = &pts[cube_tris[t].v[0]];
-            const ScreenPt *b = &pts[cube_tris[t].v[1]];
-            const ScreenPt *c = &pts[cube_tris[t].v[2]];
-            if (a->visible && b->visible && c->visible)
-                fill_triangle(a, b, c, cube_tris[t].ch);
+            int ia = cube_tris[t].v[0];
+            int ib = cube_tris[t].v[1];
+            int ic = cube_tris[t].v[2];
+            if (!pts[ia].visible || !pts[ib].visible || !pts[ic].visible)
+                continue;
+
+            /* normal of the rotated triangle */
+            Vec3 n = normalize(cross(vsub(rot[ib], rot[ia]),
+                                     vsub(rot[ic], rot[ia])));
+
+            /* make it point away from the origin (temporary shortcut) */
+            Vec3 centroid = { (rot[ia].x + rot[ib].x + rot[ic].x) / 3.0,
+                              (rot[ia].y + rot[ib].y + rot[ic].y) / 3.0,
+                              (rot[ia].z + rot[ib].z + rot[ic].z) / 3.0 };
+            if (dot(n, centroid) < 0) {
+                n.x = -n.x; n.y = -n.y; n.z = -n.z;
+            }
+
+            double d = dot(n, light);
+            if (d < 0) d = 0;
+            double brightness = AMBIENT + (1.0 - AMBIENT) * d;
+
+            fill_triangle(&pts[ia], &pts[ib], &pts[ic], shade_char(brightness));
         }
 
         present();
