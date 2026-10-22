@@ -7,6 +7,12 @@
 #define WIDTH  80
 #define HEIGHT 40
 
+#define CAMERA_DIST 5.0
+#define K           30.0
+#define ASPECT      2.0
+
+typedef struct { double x, y, z; } Vec3;
+
 static char screen[HEIGHT][WIDTH];
 static volatile sig_atomic_t running = 1;
 
@@ -33,19 +39,70 @@ static void put_char(int x, int y, char c) {
         screen[y][x] = c;
 }
 
+/* ---- 3D math ---- */
+
+static Vec3 rotate_x(Vec3 p, double a) {
+    Vec3 r = { p.x,
+               p.y * cos(a) - p.z * sin(a),
+               p.y * sin(a) + p.z * cos(a) };
+    return r;
+}
+
+static Vec3 rotate_y(Vec3 p, double a) {
+    Vec3 r = {  p.x * cos(a) + p.z * sin(a),
+                p.y,
+               -p.x * sin(a) + p.z * cos(a) };
+    return r;
+}
+
+static Vec3 rotate_z(Vec3 p, double a) {
+    Vec3 r = { p.x * cos(a) - p.y * sin(a),
+               p.x * sin(a) + p.y * cos(a),
+               p.z };
+    return r;
+}
+
+/* Returns 1 and fills sx, sy if the point is in front of the camera. */
+static int project(Vec3 p, int *sx, int *sy) {
+    double depth = p.z + CAMERA_DIST;
+    if (depth <= 0.1) return 0;
+    double scale = K / depth;
+    *sx = (int)lround(WIDTH  / 2.0 + ASPECT * p.x * scale);
+    *sy = (int)lround(HEIGHT / 2.0 - p.y * scale);
+    return 1;
+}
+
+/* ---- cube data ---- */
+
+static const Vec3 cube_vertices[8] = {
+    {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
+    {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1},
+};
+
 int main(void) {
     signal(SIGINT, handle_sigint);
     printf("\x1b[2J\x1b[?25l");
 
-    for (int frame = 0; running; frame++) {
+    double ax = 0, ay = 0, az = 0;
+
+    while (running) {
         clear_buffer();
 
-        double t = frame * 0.1;
-        int x = WIDTH / 2  + (int)(20 * cos(t));
-        int y = HEIGHT / 2 + (int)(10 * sin(t));
-        put_char(x, y, '#');
+        for (int i = 0; i < 8; i++) {
+            Vec3 p = cube_vertices[i];
+            p = rotate_x(p, ax);
+            p = rotate_y(p, ay);
+            p = rotate_z(p, az);
+
+            int sx, sy;
+            if (project(p, &sx, &sy))
+                put_char(sx, sy, '#');
+        }
 
         present();
+        ax += 0.04;
+        ay += 0.03;
+        az += 0.02;
         usleep(33000);
     }
 
