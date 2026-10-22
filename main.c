@@ -3,6 +3,7 @@
 #include <math.h>
 #include <signal.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #define WIDTH  80
 #define HEIGHT 40
@@ -72,11 +73,33 @@ static int project(Vec3 p, int *sx, int *sy) {
     return 1;
 }
 
+/* ---- line drawing (Bresenham) ---- */
+
+static void draw_line(int x0, int y0, int x1, int y1, char c) {
+    int dx =  abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    for (;;) {
+        put_char(x0, y0, c);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
 /* ---- cube data ---- */
 
 static const Vec3 cube_vertices[8] = {
     {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
     {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1},
+};
+
+static const int cube_edges[12][2] = {
+    {0, 1}, {1, 2}, {2, 3}, {3, 0},     /* back face  */
+    {4, 5}, {5, 6}, {6, 7}, {7, 4},     /* front face */
+    {0, 4}, {1, 5}, {2, 6}, {3, 7},     /* connecting */
 };
 
 int main(void) {
@@ -88,15 +111,21 @@ int main(void) {
     while (running) {
         clear_buffer();
 
+        int px[8], py[8], visible[8];
+
         for (int i = 0; i < 8; i++) {
             Vec3 p = cube_vertices[i];
             p = rotate_x(p, ax);
             p = rotate_y(p, ay);
             p = rotate_z(p, az);
+            visible[i] = project(p, &px[i], &py[i]);
+        }
 
-            int sx, sy;
-            if (project(p, &sx, &sy))
-                put_char(sx, sy, '#');
+        for (int e = 0; e < 12; e++) {
+            int a = cube_edges[e][0];
+            int b = cube_edges[e][1];
+            if (visible[a] && visible[b])
+                draw_line(px[a], py[a], px[b], py[b], '#');
         }
 
         present();
