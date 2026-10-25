@@ -318,10 +318,25 @@ static void fill_triangle(const ScreenPt *a, const ScreenPt *b,
     }
 }
 
+static int read_choice(void) {
+    printf("Choose a shape:\n"
+           "  1) cube\n"
+           "  2) pyramid\n"
+           "  3) sphere\n"
+           "  4) torus\n"
+           "> ");
+    fflush(stdout);
+
+    char line[32];
+    if (!fgets(line, sizeof line, stdin)) return 1;
+    int c = atoi(line);
+    return (c >= 1 && c <= 4) ? c : 1;
+}
+
 int main(void) {
     signal(SIGINT, handle_sigint);
 
-    Mesh mesh = build_mesh(4);
+    Mesh mesh = build_mesh(read_choice());
     Vec3     *rot = malloc(mesh.nverts * sizeof(Vec3));
     ScreenPt *pts = malloc(mesh.nverts * sizeof(ScreenPt));
     if (!rot || !pts) return 1;
