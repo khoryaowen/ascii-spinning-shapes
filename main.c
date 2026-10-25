@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 #include <signal.h>
 #include <unistd.h>
@@ -14,6 +15,8 @@
 typedef struct { double x, y, z; } Vec3;
 typedef struct { double x, y, inv_z; int visible; } ScreenPt;
 typedef struct { int v[3]; } Tri;
+typedef struct { Vec3 *verts; int nverts; Tri *tris; int ntris; } Mesh;
+typedef Vec3 (*OutwardFn)(Vec3 p);
 
 static char   screen[HEIGHT][WIDTH];
 static double zbuf[HEIGHT][WIDTH];
@@ -109,6 +112,77 @@ static char shade_char(double brightness) {
     return RAMP[idx];
 }
 
+/* ---- meshes ---- */
+
+static Mesh mesh_alloc(int nverts, int ntris) {
+    Mesh m;
+    m.nverts = nverts;
+    m.ntris  = ntris;
+    m.verts  = malloc(nverts * sizeof(Vec3));
+    m.tris   = malloc(ntris  * sizeof(Tri));
+    if (!m.verts || !m.tris) {
+        fprintf(stderr, "out of memory\n");
+        exit(1);
+    }
+    return m;
+}
+
+static void mesh_free(Mesh *m) {
+    free(m->verts);
+    free(m->tris);
+}
+
+/* Flip any triangle whose normal points toward the inside. */
+static void orient_outward(Mesh *m, OutwardFn outward) {
+    Vec3 center = {0, 0, 0};
+    for (int i = 0; i < m->nverts; i++) {
+        center.x += m->verts[i].x;
+        center.y += m->verts[i].y;
+        center.z += m->verts[i].z;
+    }
+    center.x /= m->nverts;
+    center.y /= m->nverts;
+    center.z /= m->nverts;
+
+    for (int t = 0; t < m->ntris; t++) {
+        Vec3 a = m->verts[m->tris[t].v[0]];
+        Vec3 b = m->verts[m->tris[t].v[1]];
+        Vec3 c = m->verts[m->tris[t].v[2]];
+
+        Vec3 n = cross(vsub(b, a), vsub(c, a));
+        Vec3 cen = { (a.x + b.x + c.x) / 3.0,
+                     (a.y + b.y + c.y) / 3.0,
+                     (a.z + b.z + c.z) / 3.0 };
+        Vec3 out = outward ? outward(cen) : vsub(cen, center);
+
+        if (dot(n, out) < 0) {
+            int tmp = m->tris[t].v[1];
+            m->tris[t].v[1] = m->tris[t].v[2];
+            m->tris[t].v[2] = tmp;
+        }
+    }
+}
+
+static Mesh mesh_cube(void) {
+    static const Vec3 v[8] = {
+        {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
+        {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1},
+    };
+    static const int t[12][3] = {
+        {0, 1, 2}, {0, 2, 3},   {4, 5, 6}, {4, 6, 7},
+        {0, 3, 7}, {0, 7, 4},   {1, 2, 6}, {1, 6, 5},
+        {0, 1, 5}, {0, 5, 4},   {3, 2, 6}, {3, 6, 7},
+    };
+
+    Mesh m = mesh_alloc(8, 12);
+    memcpy(m.verts, v, sizeof v);
+    for (int i = 0; i < 12; i++)
+        m.tris[i] = (Tri){{ t[i][0], t[i][1], t[i][2] }};
+
+    orient_outward(&m, NULL);
+    return m;
+}
+
 /* ---- triangle rasterizer ---- */
 
 static double edge_fn(const ScreenPt *a, const ScreenPt *b, double px, double py) {
@@ -148,36 +222,24 @@ static void fill_triangle(const ScreenPt *a, const ScreenPt *b,
     }
 }
 
-/* ---- cube data ---- */
-
-static const Vec3 cube_vertices[8] = {
-    {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
-    {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1},
-};
-
-static const Tri cube_tris[12] = {
-    {{0, 1, 2}}, {{0, 2, 3}},     /* back   (z = -1) */
-    {{4, 5, 6}}, {{4, 6, 7}},     /* front  (z = +1) */
-    {{0, 3, 7}}, {{0, 7, 4}},     /* left   (x = -1) */
-    {{1, 2, 6}}, {{1, 6, 5}},     /* right  (x = +1) */
-    {{0, 1, 5}}, {{0, 5, 4}},     /* bottom (y = -1) */
-    {{3, 2, 6}}, {{3, 6, 7}},     /* top    (y = +1) */
-};
-
 int main(void) {
     signal(SIGINT, handle_sigint);
-    printf("\x1b[2J\x1b[?25l");
+
+    Mesh mesh = mesh_cube();
+    Vec3     *rot = malloc(mesh.nverts * sizeof(Vec3));
+    ScreenPt *pts = malloc(mesh.nverts * sizeof(ScreenPt));
+    if (!rot || !pts) return 1;
 
     Vec3 light = normalize(LIGHT_RAW);
     double ax = 0, ay = 0, az = 0;
 
+    printf("\x1b[2J\x1b[?25l");
+
     while (running) {
         clear_buffers();
 
-        Vec3 rot[8];
-        ScreenPt pts[8];
-        for (int i = 0; i < 8; i++) {
-            Vec3 p = cube_vertices[i];
+        for (int i = 0; i < mesh.nverts; i++) {
+            Vec3 p = mesh.verts[i];
             p = rotate_x(p, ax);
             p = rotate_y(p, ay);
             p = rotate_z(p, az);
@@ -185,25 +247,15 @@ int main(void) {
             project(p, &pts[i]);
         }
 
-        for (int t = 0; t < 12; t++) {
-            int ia = cube_tris[t].v[0];
-            int ib = cube_tris[t].v[1];
-            int ic = cube_tris[t].v[2];
+        for (int t = 0; t < mesh.ntris; t++) {
+            int ia = mesh.tris[t].v[0];
+            int ib = mesh.tris[t].v[1];
+            int ic = mesh.tris[t].v[2];
             if (!pts[ia].visible || !pts[ib].visible || !pts[ic].visible)
                 continue;
 
-            /* normal of the rotated triangle */
             Vec3 n = normalize(cross(vsub(rot[ib], rot[ia]),
                                      vsub(rot[ic], rot[ia])));
-
-            /* make it point away from the origin (temporary shortcut) */
-            Vec3 centroid = { (rot[ia].x + rot[ib].x + rot[ic].x) / 3.0,
-                              (rot[ia].y + rot[ib].y + rot[ic].y) / 3.0,
-                              (rot[ia].z + rot[ib].z + rot[ic].z) / 3.0 };
-            if (dot(n, centroid) < 0) {
-                n.x = -n.x; n.y = -n.y; n.z = -n.z;
-            }
-
             double d = dot(n, light);
             if (d < 0) d = 0;
             double brightness = AMBIENT + (1.0 - AMBIENT) * d;
@@ -219,5 +271,8 @@ int main(void) {
     }
 
     printf("\x1b[?25h\n");
+    free(rot);
+    free(pts);
+    mesh_free(&mesh);
     return 0;
 }
