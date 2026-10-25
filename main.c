@@ -183,6 +183,102 @@ static Mesh mesh_cube(void) {
     return m;
 }
 
+static Mesh mesh_pyramid(void) {
+    static const Vec3 v[5] = {
+        {-1, -1, -1}, {1, -1, -1}, {1, -1, 1}, {-1, -1, 1}, {0, 1.2, 0},
+    };
+    static const int t[6][3] = {
+        {0, 1, 2}, {0, 2, 3},                          /* base  */
+        {0, 1, 4}, {1, 2, 4}, {2, 3, 4}, {3, 0, 4},    /* sides */
+    };
+
+    Mesh m = mesh_alloc(5, 6);
+    memcpy(m.verts, v, sizeof v);
+    for (int i = 0; i < 6; i++)
+        m.tris[i] = (Tri){{ t[i][0], t[i][1], t[i][2] }};
+
+    orient_outward(&m, NULL);
+    return m;
+}
+
+#define SPHERE_RADIUS 1.5
+
+static Mesh mesh_sphere(int stacks, int slices) {
+    Mesh m = mesh_alloc((stacks + 1) * slices, 2 * stacks * slices);
+
+    for (int i = 0; i <= stacks; i++) {
+        double phi = M_PI * i / stacks;
+        for (int j = 0; j < slices; j++) {
+            double theta = 2.0 * M_PI * j / slices;
+            m.verts[i * slices + j] = (Vec3){
+                SPHERE_RADIUS * sin(phi) * cos(theta),
+                SPHERE_RADIUS * cos(phi),
+                SPHERE_RADIUS * sin(phi) * sin(theta) };
+        }
+    }
+
+    int k = 0;
+    for (int i = 0; i < stacks; i++) {
+        for (int j = 0; j < slices; j++) {
+            int j2 = (j + 1) % slices;
+            int a = i * slices + j,       b = i * slices + j2;
+            int c = (i + 1) * slices + j, d = (i + 1) * slices + j2;
+            m.tris[k++] = (Tri){{ a, c, b }};
+            m.tris[k++] = (Tri){{ b, c, d }};
+        }
+    }
+
+    orient_outward(&m, NULL);
+    return m;
+}
+
+#define TORUS_MAJOR 1.2
+#define TORUS_MINOR 0.5
+
+static Vec3 torus_outward(Vec3 p) {
+    double len = sqrt(p.x * p.x + p.z * p.z);
+    if (len < 1e-9) len = 1e-9;
+    Vec3 ring = { TORUS_MAJOR * p.x / len, 0, TORUS_MAJOR * p.z / len };
+    return vsub(p, ring);
+}
+
+static Mesh mesh_torus(int rings, int sides) {
+    Mesh m = mesh_alloc(rings * sides, 2 * rings * sides);
+
+    for (int i = 0; i < rings; i++) {
+        double theta = 2.0 * M_PI * i / rings;
+        for (int j = 0; j < sides; j++) {
+            double phi = 2.0 * M_PI * j / sides;
+            double r = TORUS_MAJOR + TORUS_MINOR * cos(phi);
+            m.verts[i * sides + j] = (Vec3){
+                r * cos(theta), TORUS_MINOR * sin(phi), r * sin(theta) };
+        }
+    }
+
+    int k = 0;
+    for (int i = 0; i < rings; i++) {
+        for (int j = 0; j < sides; j++) {
+            int i2 = (i + 1) % rings, j2 = (j + 1) % sides;
+            int a = i  * sides + j,  b = i2 * sides + j;
+            int c = i  * sides + j2, d = i2 * sides + j2;
+            m.tris[k++] = (Tri){{ a, b, c }};
+            m.tris[k++] = (Tri){{ b, d, c }};
+        }
+    }
+
+    orient_outward(&m, torus_outward);
+    return m;
+}
+
+static Mesh build_mesh(int choice) {
+    switch (choice) {
+        case 2:  return mesh_pyramid();
+        case 3:  return mesh_sphere(20, 40);
+        case 4:  return mesh_torus(40, 20);
+        default: return mesh_cube();
+    }
+}
+
 /* ---- triangle rasterizer ---- */
 
 static double edge_fn(const ScreenPt *a, const ScreenPt *b, double px, double py) {
@@ -225,7 +321,7 @@ static void fill_triangle(const ScreenPt *a, const ScreenPt *b,
 int main(void) {
     signal(SIGINT, handle_sigint);
 
-    Mesh mesh = mesh_cube();
+    Mesh mesh = build_mesh(4);
     Vec3     *rot = malloc(mesh.nverts * sizeof(Vec3));
     ScreenPt *pts = malloc(mesh.nverts * sizeof(ScreenPt));
     if (!rot || !pts) return 1;
