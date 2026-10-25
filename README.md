@@ -118,7 +118,3 @@ The project is built in small milestones, one commit each:
 - Shading is flat (one character per triangle), so the sphere and torus look slightly faceted.
 - Shape selection requires editing the source and recompiling.
 - The canvas size is fixed at compile time.
-
-## License
-
-Add a license of your choice here (for example MIT).
